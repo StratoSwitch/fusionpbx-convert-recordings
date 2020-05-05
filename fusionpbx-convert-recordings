@@ -1,0 +1,53 @@
+#!/bin/sh
+#
+#  Needs ffmpeg to work.  Verify recordings directory!
+#  Script assumes default 'package install' freeswitch recordings directory /var/lib/freeswitch/recordings
+#
+## Find the database password and export it
+PGPASSWORD="$(grep db_password /etc/fusionpbx/config.php | cut -d "'" -f2)"
+export PGPASSWORD
+#
+## Log when conversion process started
+echo $(date -u) "conversions started" >> /var/log/fusionpbx-convert.log
+#
+##Find wav files from yesterday and convert them to opus, then delete original files, then update xml cdr and call recording database entries
+for DIRECTORY in /var/lib/freeswitch/recordings/*/; do
+  DIRYESTERDAY=/var/lib/freeswitch/recordings/`basename "$DIRECTORY"`/archive/`date -d "yesterday" +%Y/%b/%d`
+    if [ -d "$DIRYESTERDAY" ]; then
+      for WAVFILE in /var/lib/freeswitch/recordings/`basename "$DIRECTORY"`/archive/`date -d 'yesterday' +%Y/%b/%d`/*.wav; do
+      BNAME=`basename $WAVFILE .wav`
+echo $BNAME
+        ffmpeg -i $WAVFILE -c:a libopus -b:a 8k $DIRYESTERDAY/$BNAME.ogg >> /dev/null
+        psql --host=127.0.0.1 --username=fusionpbx -t -c "UPDATE v_call_recordings SET call_recording_name = '$BNAME.ogg' WHERE call_recording_name = '$BNAME.wav' and call_recording_path = '$DIRYESTERDAY'"
+        psql --host=127.0.0.1 --username=fusionpbx -t -c "UPDATE v_xml_cdr set record_name = '$BNAME.ogg' WHERE record_name = '$BNAME.wav'"
+      done
+#####################
+# Comment out next line if testing.  Don't want to lose a recording if conversion fails.
+#####################
+    rm $DIRYESTERDAY/*.wav
+    fi
+ chown -R www-data:www-data $DIRYESTERDAY/*
+done
+
+## 
+## If you find you have call recordings in /var/lib/freeswitch/recordings/archive uncomment next section.
+## If recordings are started from "inbound route", call recordings may end up here without a domain assigned.
+##
+#
+#for DIRECTORY in /var/lib/freeswitch/recordings/*/; do
+#  DIRYESTERDAY=/var/lib/freeswitch/recordings/`basename "$DIRECTORY"`/`date -d "yesterday" +%Y/%b/%d`
+#    if [ -d "$DIRYESTERDAY" ]; then
+#      for WAVFILE in /var/lib/freeswitch/recordings/`basename "$DIRECTORY"`/`date -d 'yesterday' +%Y/%b/%d`/*.wav; do
+#      BNAME=`basename $WAVFILE .wav`
+#echo $BNAME
+#        ffmpeg -i $WAVFILE -c:a libopus -b:a 8k $DIRYESTERDAY/$BNAME.ogg >> /dev/null
+#        psql --host=127.0.0.1 --username=fusionpbx -t -c "UPDATE v_call_recordings SET call_recording_name = '$BNAME.ogg' WHERE call_recording_name = '$BNAME.wav' and call_recording_path = '$DIRYESTERDAY'"
+#        psql --host=127.0.0.1 --username=fusionpbx -t -c "UPDATE v_xml_cdr set record_name = '$BNAME.ogg' WHERE record_name = '$BNAME.wav'"
+#      done
+#    rm $DIRYESTERDAY/*.wav
+#    fi
+# chown -R www-data:www-data $DIRYESTERDAY/*
+#done
+#
+## Log when conversion process finished
+echo $(date -u) "conversions complete" >> /var/log/fusionpbx-convert.log
